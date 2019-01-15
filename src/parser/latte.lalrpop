@@ -1,0 +1,158 @@
+use std::str::FromStr;
+use parser::ast::{Program, TopDef, TopDefG, Arg, Type, Stmt, StmtG, DeclItem, DeclItemG, Expr, ExprG, BinOper, UnaryOper, WithPosition};
+use parser::latte_lalrpop::*;
+use data::types::FrontError;
+
+//TODO ErrorRecovery
+grammar<'err>(errors: &'err mut Vec<FrontError>);
+//grammar;
+
+pub Program: Program = <(<WithPosition<TopDef>>)+>;
+
+TopDef: TopDef = {
+    <r:Type> <n:Ident> "(" <a:ColonOpt<WithPosition<Arg>>> ")" <s:WithPosition<Block>> => TopDefG::Func(n, a, r, s)
+}
+
+Arg: Arg = Type Ident => Arg::new(<>);
+
+Stmt = OpenStmt;
+
+OpenStmt = WithPosition<StmtOC<"Open">>;
+ClosedStmt = WithPosition<StmtOC<"Closed">>;
+
+Block: Stmt = "{" <(<OpenStmt>)*> "}" => StmtG::Block(<>);
+
+StmtWithPos<OpenClosed> = WithPosition<StmtOC<OpenClosed>>;
+StmtOC<OpenClosed>: Stmt = {
+    Block,
+    <Type> <Colon<DeclItem>> ";" => StmtG::Decl(<>),
+    <Ident> "=" <Expr> ";" => StmtG::Ass(<>),
+    <Ident> "++" ";" => StmtG::Inc(<>),
+    <Ident> "--" ";" => StmtG::Dec(<>),
+    "return" <Expr?> ";" => StmtG::Ret(<>),
+    "if" <c:Parens<Expr>> <s:ClosedStmt> "else" <s2:StmtWithPos<OpenClosed>> => StmtG::If(c, s, Option::Some(s2)),
+    "if" <c:Parens<Expr>> <s:OpenStmt> if OpenClosed == "Open" => StmtG::If(c, s, Option::None),
+    "while" <c:Parens<Expr>> <s:StmtWithPos<OpenClosed>> => StmtG::While(<>),
+    <Expr> ";" => StmtG::Expr(<>),
+    <l:@L> ! <r:@R> => { errors.push(FrontError::new(l, r, "Invalid statement")); StmtG::Error}
+}
+
+DeclItem: DeclItem = {
+    Ident => DeclItemG::NoInit(<>),
+    <Ident> "=" <Expr> => DeclItemG::WithInit(<>)
+}
+
+Expr = WithPosition<OrExpr>;
+
+OrExpr = RightTierExpr<OrOper, AndExpr>;
+OrOper: BinOper = "||" => BinOper::Or;
+
+AndExpr = RightTierExpr<AndOper, RelExpr>;
+AndOper: BinOper = "&&" => BinOper::And;
+
+RelExpr = LeftTierExpr<RelOper, AddExpr>;
+RelOper: BinOper = {
+    "==" => BinOper::Eq,
+    "!=" => BinOper::NE,
+    "<" => BinOper::LT,
+    ">" => BinOper::GT,
+    "<=" => BinOper::LE,
+    ">=" => BinOper::GE,
+}
+
+AddExpr = LeftTierExpr<AddOper, MulExpr>;
+AddOper: BinOper = {
+    "+" => BinOper::Add,
+    "-" => BinOper::Sub
+}
+
+MulExpr = LeftTierExpr<MulOper, UnaryOperator>;
+MulOper: BinOper = {
+    "*" => BinOper::Mul,
+    "/" => BinOper::Div,
+    "%" => BinOper::Mod
+}
+
+UnaryOperator = UnaryTierExpr<UnaryOper, Literals>;
+UnaryOper: UnaryOper = {
+    "!" => UnaryOper::Not,
+    "-" => UnaryOper::Neg
+}
+
+Literals: Expr = {
+    Ident => ExprG::Id(<>),
+    Num => ExprG::Int(<>),
+    Str => ExprG::Str(<>),
+    "true" => ExprG::Bool(true),
+    "false" => ExprG::Bool(false),
+    Ident Parens<ColonOpt<Expr>> => ExprG::App(<>),
+    <e:Parens<Expr>> => (*e).item
+}
+
+Type: Box<Type> = {
+    "int" => Box::new(Type::Int),
+    "string" => Box::new(Type::Str),
+    "boolean" => Box::new(Type::Bool),
+    "void" => Box::new(Type::Void),
+    <Type> "[]" => Box::new(Type::Arr(<>))
+}
+
+Parens<T>: T = {
+    "(" <T> ")"
+}
+
+ColonOpt<T>: Vec<T> = {
+    <h:(<T> ",")*> <t:T?> => match t {
+        None => h,
+        Some(t) => {
+            let mut h = h;
+            h.push(t);
+            h
+        }
+    }
+}
+
+Colon<T>: Vec<T> = {
+    <h:(<T> ",")*> <t:T> => {
+        let mut h = h;
+        h.push(t);
+        h
+    }
+}
+
+WithPosition<T>: Box<WithPosition<T, ()>> = {
+    <l:@L> <v:T> <r:@R> => Box::new(WithPosition::new(l, r, v))
+}
+
+LeftTierExpr<Oper, NextTier>: Expr = {
+    WithPosition<LeftTierExpr<Oper, NextTier>> Oper WithPosition<NextTier> => {
+        match make_oper(<>) {
+            Ok(v) => v,
+            Err(vec) => {
+                errors.push(vec);
+                ExprG::Error
+            }
+        }
+    },
+    NextTier
+}
+RightTierExpr<Oper, NextTier>: Expr = {
+    WithPosition<NextTier> Oper WithPosition<RightTierExpr<Oper, NextTier>> => {
+        match make_oper(<>) {
+            Ok(v) => v,
+            Err(vec) => {
+                errors.push(vec);
+                ExprG::Error
+            }
+        }
+    },
+    NextTier
+}
+UnaryTierExpr<Oper, NextTier>: Expr = {
+    <Oper> <WithPosition<NextTier>> => make_unary(<>),
+    NextTier
+}
+
+Ident: String = r"[_a-zA-Z][a-zA-Z0-9'_]*" => <>.to_string();
+Num: i32 = r"0|(?:[1-9][0-9]*)" => i32::from_str(<>).unwrap();
+Str: String = r#""([^\\]+\\(?:\\"nt))*[^\\"]*""# => as_str(<>);
