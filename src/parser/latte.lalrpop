@@ -1,5 +1,5 @@
 use std::str::FromStr;
-use parser::ast::{Program, TopDef, TopDefG, Arg, Type, Stmt, StmtG, DeclItem, DeclItemG, Expr, ExprG, BinOper, UnaryOper, WithPosition};
+use parser::ast::{Program, TopDef, TopDefG, Arg, Type, SimpleType, Stmt, StmtG, DeclItem, DeclItemG, Expr, ExprG, BinOper, UnaryOper, WithPosition};
 use parser::latte_lalrpop::*;
 use data::types::FrontError;
 
@@ -15,7 +15,7 @@ TopDef: TopDef = {
 
 Arg: Arg = Type Ident => Arg::new(<>);
 
-Stmt = OpenStmt;
+pub Stmt = OpenStmt;
 
 OpenStmt = WithPosition<StmtOC<"Open">>;
 ClosedStmt = WithPosition<StmtOC<"Closed">>;
@@ -32,6 +32,7 @@ StmtOC<OpenClosed>: Stmt = {
     "return" <Expr?> ";" => StmtG::Ret(<>),
     "if" <c:Parens<Expr>> <s:ClosedStmt> "else" <s2:StmtWithPos<OpenClosed>> => StmtG::If(c, s, Option::Some(s2)),
     "if" <c:Parens<Expr>> <s:OpenStmt> if OpenClosed == "Open" => StmtG::If(c, s, Option::None),
+    "for" "(" <SimpleType> <Ident> ":" <Ident> ")" <StmtWithPos<OpenClosed>> => StmtG::For(<>),
     "while" <c:Parens<Expr>> <s:StmtWithPos<OpenClosed>> => StmtG::While(<>),
     <Expr> ";" => StmtG::Expr(<>),
     <l:@L> ! <r:@R> => { errors.push(FrontError::new(l, r, "Invalid statement")); StmtG::Error}
@@ -42,7 +43,7 @@ DeclItem: DeclItem = {
     <Ident> "=" <Expr> => DeclItemG::WithInit(<>)
 }
 
-Expr = WithPosition<OrExpr>;
+pub Expr = WithPosition<OrExpr>;
 
 OrExpr = RightTierExpr<OrOper, AndExpr>;
 OrOper: BinOper = "||" => BinOper::Or;
@@ -86,15 +87,22 @@ Literals: Expr = {
     "true" => ExprG::Bool(true),
     "false" => ExprG::Bool(false),
     Ident Parens<ColonOpt<Expr>> => ExprG::App(<>),
+    <Ident> "[" <Expr> "]" => ExprG::ArrayAccess(<>),
+    <Parens<Type>> "null" => ExprG::Null(<>),
+    "new" <Type> => ExprG::New(<>),
     <e:Parens<Expr>> => (*e).item
 }
 
 Type: Box<Type> = {
-    "int" => Box::new(Type::Int),
-    "string" => Box::new(Type::Str),
-    "boolean" => Box::new(Type::Bool),
-    "void" => Box::new(Type::Void),
-    <Type> "[]" => Box::new(Type::Arr(<>))
+    SimpleType => Box::new(Type::Simple(<>)),
+    <SimpleType> "[]" => Box::new(Type::Arr(<>))
+}
+
+SimpleType: SimpleType = {
+    "int" => SimpleType::Int,
+    "string" => SimpleType::Str,
+    "boolean" => SimpleType::Bool,
+    "void" => SimpleType::Void,
 }
 
 Parens<T>: T = {

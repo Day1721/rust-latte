@@ -11,7 +11,7 @@ pub fn check_map_program(mut ast: ast::Program, env: &mut HashMap<String, Intern
         let stmt = *stmt_box;
         let mut attrs = ast::StmtAttr::new();
         let res = match stmt.item {
-            Block(stmts) => { 
+            Block(stmts) => {
                 let mapped: Vec<ast::AttrStmt> = stmts.into_iter().map(|s|map_stmt(s)).collect();
                 attrs.returns = mapped.iter().any(|s| (**s).attributes.returns);
                 Block(mapped)
@@ -24,7 +24,7 @@ pub fn check_map_program(mut ast: ast::Program, env: &mut HashMap<String, Intern
                         let mapped_expr = map_expr(expr);
                         WithInit(id, mapped_expr)
                     }
-                }).collect(); 
+                }).collect();
                 Decl(t, mapped_items)
             },
             Ass(id, e) => Ass(id, map_expr(e)),
@@ -45,6 +45,10 @@ pub fn check_map_program(mut ast: ast::Program, env: &mut HashMap<String, Intern
                 };
                 If(mapped_cond, then_mapped, else_mapped_opt)
             },
+            For(t, iter, arr, stmt) => {
+                let mapped_stmt = map_stmt(stmt);
+                For(t, iter, arr, mapped_stmt)
+            },
             While(cond, stmt) => {
                 let mapped_cond = map_expr(cond);
                 let stmt_mapped = map_stmt(stmt);
@@ -63,7 +67,7 @@ pub fn check_map_program(mut ast: ast::Program, env: &mut HashMap<String, Intern
             // let expr = *expr_box;
             // let mut attrs = ast::ExprAttr::new();
             // let res = match expr.item {
-                
+
             // };
             // unimplemented!()
             expr_box
@@ -94,7 +98,7 @@ pub fn check_optimize_stmts(ast: &mut ast::Program, env: HashMap<String, Interna
     for (k,v) in env {
         new_env.insert(k, v.to_var_data(true, false));
     }
-    
+
     for stmt in ast {
         check_top_def(&mut stmt.as_mut().item, new_env.clone()).move_err_to(&mut errs);
     }
@@ -123,14 +127,14 @@ fn check_top_def(top_def: &mut ast::TopDef, mut env: CheckerEnv) -> FrontResult<
 
     match top_def {
         Func(id, args, res, stmt) => {
-            update_env(&mut env, args).map_err(|e|vec![e])?;
+            update_env(&mut env, args)?;
             let t: ast::Type = *res.clone();
             let mut checker = StmtChecker::new(env, t);
             let status = checker.check(stmt)?;
 
             normalize_name(id, args.iter().map(|arg| &(*(**arg).item.ltype)).collect());
 
-            if **res == ast::Type::Void {
+            if **res == ast::Type::Simple(ast::SimpleType::Void) {
                 return Ok(());
             }
 
@@ -191,8 +195,8 @@ impl StmtChecker {
 
         macro_rules! inc_dec_handle {
             ($id:ident) => {{
-                let t = self.get_type($id, &pos, true).map_err(|e|vec![e])?;
-                let int_t = ast::Type::Int.to_internal_type();
+                let t = self.get_type($id, &pos, true)?;
+                let int_t = ast::SimpleType::Int.to_internal_type();
                 if t != int_t {
                     return Err(vec![FrontError {
                         position: pos,
@@ -223,7 +227,7 @@ impl StmtChecker {
                 for decl in decls {
                     match decl {
                         NoInit(id) => self.env.insert(id.clone(), t.clone().to_internal_type().to_var_data(false, true)),
-                        WithInit(id, e) => { 
+                        WithInit(id, e) => {
                             let e_t = self.expr_type(e)?;
                             let t_intern = (**t).clone().to_internal_type();
                             if !e_t.assignable_to(&t_intern) {
@@ -232,7 +236,7 @@ impl StmtChecker {
                                     message: invalid_type(&t_intern, &e_t)
                                 }])
                             }
-                            self.env.insert(id.clone(), t.clone().to_internal_type().to_var_data(true, true)) 
+                            self.env.insert(id.clone(), t.clone().to_internal_type().to_var_data(true, true))
                         }
                     };
                     let id = decl.get_ident();
@@ -265,18 +269,19 @@ impl StmtChecker {
             },
             Inc(id) => {
                 let r: Result<(),FrontError> = inc_dec_handle!(id);
-                r.map_err(|err|vec![err])?;
+                r?;
             },
             Dec(id) => {
                 let r: Result<(),FrontError> = inc_dec_handle!(id);
-                r.map_err(|err|vec![err])?;
+                r?;
             },
             Ret(opt) => {
                 use self::ast::Type::*;
+                use self::ast::SimpleType::*;
                 res.non_ret_position = None;
                 match (opt, &self.ret_type) {
-                    (None, Void) => (),
-                    (Some(_), Void) => return Err(vec![FrontError {
+                    (None, Simple(Void)) => (),
+                    (Some(_), Simple(Void)) => return Err(vec![FrontError {
                         position: pos,
                         message: "Return value from void function".to_string()
                     }]),
@@ -298,7 +303,7 @@ impl StmtChecker {
             },
             If(cond, then, else_opt) => {
                 let cond_t = self.expr_type(cond)?;
-                let bool_t = ast::Type::Bool.to_internal_type();
+                let bool_t = ast::SimpleType::Bool.to_internal_type();
                 if !cond_t.assignable_to(&bool_t) {
                     return Err(vec![FrontError {
                         position: pos,
@@ -340,9 +345,29 @@ impl StmtChecker {
 
                 self.merge_env(vec![then_checker,else_checker]);
             },
+            For(t, id, arr, stmt) => {
+                let arr_checked_t = self.get_type(arr, &pos, false)?;
+                match arr_checked_t.simple_type() {
+                    Some(ast::Type::Arr(arr_t)) => if *t != arr_t {
+                        return Err(vec![FrontError {
+                            position: pos,
+                            message: invalid_type(&arr_t.to_internal_type(), &t.to_internal_type())
+                        }])
+                    },
+                    _ => return Err(vec![FrontError {
+                        position: pos,
+                        message: format!("Invalid type: expected array type, but found {}", arr_checked_t)
+                    }])
+                }
+
+                let old_local = std::mem::replace(&mut self.local_env, vec![id.clone()]);
+                let status = self.check(stmt)?;
+                self.local_env = old_local;
+                res.non_ret_position = status.non_ret_position;
+            }
             While(cond, stmt) => {
                 let cond_t = self.expr_type(cond)?;
-                let bool_t = ast::Type::Bool.to_internal_type();
+                let bool_t = ast::SimpleType::Bool.to_internal_type();
                 if !cond_t.assignable_to(&bool_t) {
                     return Err(vec![FrontError {
                         position: pos,
@@ -354,13 +379,13 @@ impl StmtChecker {
                 res.non_ret_position = match as_bool(&cond) {
                     Some(false) => Some(pos),
                     Some(true) => None,
-                    None => status.non_ret_position 
+                    None => status.non_ret_position
                 };
             },
             Expr(expr) => {
                 self.expr_type(expr)?;
-            }
-            _ => ()
+            },
+            Error => ()
         };
 
         match replace {
@@ -374,18 +399,18 @@ impl StmtChecker {
     fn expr_type(&self, expr: &mut ast::Expression) -> FrontResult<InternalType> {
         use self::ast::ExprG::*;
         let pos = (*expr).position.clone();
-        // let mut errs = vec![]; 
+        // let mut errs = vec![];
 
         match &mut (**expr).item {
-            Id(id) => self.get_type(id, &pos, false).map_err(|e|vec![e]),
-            Int(_) => Ok(ast::Type::Int.to_internal_type()),
-            Bool(_) => Ok(ast::Type::Bool.to_internal_type()),
-            Str(_) => Ok(ast::Type::Str.to_internal_type()),
+            Id(id) => Ok(self.get_type(id, &pos, false)?),
+            Int(_) => Ok(ast::SimpleType::Int.to_internal_type()),
+            Bool(_) => Ok(ast::SimpleType::Bool.to_internal_type()),
+            Str(_) => Ok(ast::SimpleType::Str.to_internal_type()),
             App(id, args) => {
-                let func_t = self.get_type(id, &pos, true).map_err(|e|vec![e])?;
+                let func_t = self.get_type(id, &pos, true)?;
                 let args_res_t: Vec<FrontResult<InternalType>> = args.iter_mut().map(|arg|self.expr_type(arg)).collect();
                 let args_t = aggregate_err(args_res_t)?;
-                
+
                 let mut candidates: Vec<SpecType> = vec![];
                 for simple_t in func_t.vec() {
                     use self::SpecType::*;
@@ -403,7 +428,7 @@ impl StmtChecker {
                                 candidates.push(simple_t.clone());
                             };
                         },
-                        Type(_) => ()
+                        _ => ()
                     };
                 }
                 match candidates.len() {
@@ -411,13 +436,13 @@ impl StmtChecker {
                         position: pos,
                         message: format!("no matching type found for {}", id)
                     }]),
-                    1 => { 
+                    1 => {
                         let (args, ret) = match &candidates[0] {
                             SpecType::Func(args, ret) => (args, ret),
-                            SpecType::Type(_) => unreachable!()
+                            _ => unreachable!()
                         };
                         normalize_name(id, args.iter().map(|boxed| boxed.as_ref()).collect());
-                        Ok(ret.clone().to_internal_type()) 
+                        Ok(ret.clone().to_internal_type())
                     }
                     _ => Err(vec![FrontError {
                         position: pos,
@@ -462,8 +487,29 @@ impl StmtChecker {
                 } else {
                     Ok(oper.get_ret_type())
                 }
+            },
+            ArrayAccess(arr, idx) => {
+                use self::ast::{Type::*, SimpleType::*};
+                let idx_t = self.expr_type(idx)?;
+                match idx_t.simple_type() {
+                    Some(Simple(Int)) => (),
+                    _ => return Err(vec![FrontError {
+                        position: pos,
+                        message: format!("array index variable should be integral type, but found {}", idx_t)
+                    }])
+                };
+                let arr_t = self.get_type(arr, &pos, true)?;
+                match arr_t.simple_type() {
+                    Some(Arr(t)) => Ok(t.to_internal_type()),
+                    _ => Err(vec![FrontError {
+                        position: pos,
+                        message: format!("Indexed variable should be array type, but found {}", arr_t)
+                    }])
+                }
             }
-            Error => panic!("Unreachable"),
+            Null(t) => Ok((*t).clone().to_internal_type()),
+            New(t) => Ok((*t).clone().to_internal_type()),
+            Error => unreachable!(),
         }
     }
 
@@ -483,7 +529,7 @@ impl StmtChecker {
             })
         }
     }
-    
+
     fn merge_env(&mut self, other: Vec<StmtChecker>) {
         for (k, v) in self.env.iter_mut() {
             v.initialized = other.iter().all(|checker|checker.env.get(k).map(|v2|v2.initialized).unwrap_or(false))
@@ -541,8 +587,8 @@ fn aggregate_err<V,E>(res: Vec<Result<V,Vec<E>>>) -> Result<Vec<V>, Vec<E>> {
             Err(mut e) => errs.append(&mut e)
         };
     };
-    if errs.len() > 0 { 
-        Err(errs) 
+    if errs.len() > 0 {
+        Err(errs)
     } else {
         Ok(succs)
     }
@@ -570,11 +616,26 @@ impl ast::Type {
     fn stringify(&self) -> String {
         use self::ast::Type::*;
         match self {
+            Simple(t) => t.stringify(),
+            Arr(t) => format!("A{}", t.stringify())
+        }
+    }
+}
+
+impl ast::SimpleType {
+    fn stringify(&self) -> String {
+        use self::ast::SimpleType::*;
+        match self {
             Int => "I".to_string(),
             Str => "S".to_string(),
             Bool => "B".to_string(),
             Void => "V".to_string(),
-            Arr(t) => format!("A{}", t)
         }
+    }
+}
+
+impl std::convert::From<FrontError> for Vec<FrontError> {
+    fn from(res: FrontError) -> Self {
+        vec![res]
     }
 }

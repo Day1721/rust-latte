@@ -2,6 +2,11 @@
 #include <stdlib.h>
 #include <string.h>
 
+typedef struct arr {
+    void* body;
+    int length;
+} arr_t;
+
 int readInt() {
     int ret;
     scanf("%d\n", &ret);

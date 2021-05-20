@@ -61,9 +61,9 @@ impl Translator {
                     let t = (*a.ltype).to_llvm_type();
                     format!("{} %{}", t, a.name)
                 }).collect::<Vec<String>>().join(", "); //"".to_string();
-                
+
                 writeln!(self.output, "define {} @{} ({}) {{", res.to_llvm_type(), id, args_repr);
-                
+
                 let start_label = self.new_label();
                 self.push_label(&start_label);
 
@@ -192,6 +192,34 @@ impl Translator {
                     _ => self.push_label(&end_label)
                 };
             },
+            For(t, id, arr, stmt) => {
+                self.idents.depth = self.idents.depth + 1;
+                let val_t = (*t).to_llvm_type();
+
+                let start_label = self.current_label.clone();
+                let loop_label = self.new_label();
+                writeln!(self.output, "br label %{}", loop_label);
+
+                self.push_label(&loop_label);
+                let idx_reg = self.new_reg(LlvmType::I32);
+                let next_idx_reg = self.new_reg(LlvmType::I32);
+                writeln!(self.output, "{} = phi [0, %{}], [{}, {}]", idx_reg.name, start_label, next_idx_reg.name, loop_label);
+
+                let var_reg_name = {
+                    let r = self.as_reg_mut(id);
+                    r.reg_type = val_t.clone().ptr();
+                    r.name.clone()
+                };
+                // writeln!(self.output, "{} = getelementptr [{} x i8], [{} x i8]* @{}, i32 0, i32 0", reg.name, len+1, len+1, global_id);
+                let arr_reg = self.clone_reg(arr);
+                writeln!(self.output, "{} = getelementptr {}, {}* {}, i32 0, i32 0, i32 {}", var_reg_name, val_t, val_t, arr_reg.name, idx_reg.name);
+                // let tmp_reg = self.new_reg(val_t.clone());
+                // writeln!(self.output, "{} = load {}, {}* {}", tmp_reg.name, val_t, val_t, arr_ptr.name);
+                self.translate_stmt(stmt);
+
+                self.idents.depth = self.idents.depth + 1;
+                self.idents.clean();
+            },
             While(cond, stmt) => {
                 let cond_label = self.new_label();
                 writeln!(self.output, "br label %{}", cond_label);
@@ -234,11 +262,11 @@ impl Translator {
                     .join(", ");
                 let func_ret = match &self.func_types[id] {
                     Func(_, ret) => ret,
-                    Type(_) => unreachable!()
+                    _ => unreachable!()
                 }.to_llvm_type();
 
                 match func_ret {
-                    LlvmType::Void => { 
+                    LlvmType::Void => {
                         writeln!(self.output, "call {} @{}({})", func_ret, id, values);
                         Value::Const(ConstValue::Void)
                     },
@@ -269,6 +297,21 @@ impl Translator {
                     self.translate_strict(l_val, oper, r_val)
                 }
             },
+            ArrayAccess(arr, idx) => {
+                let idx_val = self.translate_expr(idx);
+                let arr_reg = self.clone_reg(arr);
+                let arr_t = arr_reg.reg_type.clone().deref();
+                let ptr_reg = self.new_reg(arr_reg.reg_type.clone());
+                let res_reg = self.new_reg(arr_t.clone());
+
+                writeln!(self.output, "{} = getelementptr {}, {}* {}, i32 0, i32 {}", ptr_reg.name, arr_t, arr_t, arr_reg.name, idx_val);
+                writeln!(self.output, "{} = load {}, {}* {}", res_reg.name, arr_t, arr_t, ptr_reg.name);
+                res_reg.as_value()
+            }
+            Null(t) => Value::Const(ConstValue::Null),
+            New(t) => {
+                unimplemented!()
+            }
             Error => unreachable!()
         }
     }
@@ -308,7 +351,7 @@ impl Translator {
         let mut reg = self.new_reg(ret_type);
         match oper {
             Add => match l.get_type() {
-                LlvmType::I32 => { 
+                LlvmType::I32 => {
                     writeln!(self.output, "{} = add i32 {}, {}", reg.name, l, r);
                     reg.reg_type = LlvmType::I32;
                 },
@@ -364,37 +407,6 @@ declare void @printInt(i32)
 declare void @printString(i8*)
 declare i8* @concat(i8*, i8*)
         "#);
-    //     writeln!(self.output, r#"
-    //         declare i32 @printf(i8*, ...)
-    //         declare i32 @scanf(i8*, ...)
-    //         declare void* @malloc
-    //         declare void @free(i8*)
-
-    //         @formatStringInt = private constant [4 x i8] c"%d\0A\OO"
-    //         @formatStringStr = private constant [4 x i8] c"%s\0A\OO"
-            
-    //         define void @printInt(i32 %v) {{
-    //             call i32 (i8*, ...) @printf(i8* getelementptr inbounds ([4 x i8], [4 x i8]* @formatStringInt, i32 0, i32 0), i32 %v) 
-    //         }}
-            
-    //         define void @printString(i8* %str) {{
-    //             call i32 (i8*, ...) @printf(i8* getelementptr inbounds ([4 x i8], [4 x i8]* @formatStringStr, i32 0, i32 0), i8* %str) 
-    //         }}
-
-    //         define i32 readInt() {{
-    //             %v = alloca i32
-    //             call i32 (i8*, ...) @scanf(i8* getelementptr inbounds ([4 x i8], [4 x i8]* @formatStringInt, i32 0, i32 0), i32* %v)
-    //             %ret = load i32, i32* %v
-    //             ret i32 %ret
-    //         }}
-
-    //         define i8* readString() {{
-    //             %v = alloca i8*
-    //             call i32 (i8*, ...) @scanf(i8* getelementptr inbounds ([4 x i8], [4 x i8]* @formatStringStr, i32 0, i32 0), i8** %v)
-    //             %ret = load i8*, i8** %v
-    //             ret i8* %ret
-    //         }}
-    //     "#);
     }
 
     fn load(&mut self, id: &String) -> Register {
@@ -438,7 +450,7 @@ declare i8* @concat(i8*, i8*)
     //     }
     //     self.idents.get(id)
     // }
-    
+
 
 
     fn as_reg_mut(&mut self, id: &String) -> &mut Register {
@@ -606,7 +618,7 @@ impl LlvmType {
     fn deref(self) -> LlvmType {
         match self {
             LlvmType::Ptr(v) => *v,
-            _ => { 
+            _ => {
                 panic!("DEREF OF NON-PTR TYPE: {}", self)
             }
         }
@@ -675,11 +687,21 @@ impl TypeConvertable<LlvmType> for ast::Type {
         use self::ast::Type::*;
         use self::LlvmType::*;
         match self {
+            Simple(t) => t.to_llvm_type(),
+            Arr(t) => Ptr(Box::new(t.to_llvm_type()))
+        }
+    }
+}
+
+impl TypeConvertable<LlvmType> for ast::SimpleType {
+    fn to_llvm_type(&self) -> LlvmType {
+        use self::ast::SimpleType::*;
+        use self::LlvmType::*;
+        match self {
             Int => I32,
-            ast::Type::Void => LlvmType::Void,
+            ast::SimpleType::Void => LlvmType::Void,
             Bool => I1,
             Str => Ptr(Box::new(I8)),
-            Arr(t) => Ptr(Box::new(t.to_llvm_type()))
         }
     }
 }
@@ -689,7 +711,7 @@ impl TypeConvertable<LlvmType> for types::SpecType {
         use self::types::SpecType::*;
         match self {
             Type(t) => t.to_llvm_type(),
-            Func(args, res) => { 
+            Func(args, res) => {
                 let llvm_args = args.iter().map(|t| Box::new((*t).to_llvm_type())).collect();
                 let llvm_res = Box::new((*res).to_llvm_type());
                 LlvmType::Func(llvm_args, llvm_res)
@@ -725,3 +747,19 @@ impl<T> Ignore for T {
         ()
     }
 }
+
+
+trait SizeHaving {
+    fn size(&self) -> usize;
+}
+
+// impl SizeHaving for ast::SimpleType {
+//     fn size(&self) -> usize {
+//         use self::ast::SimpleType::*;
+//         match self {
+//             Int => 4,
+//             Bool => 1,
+//             _ => unimplemented!()
+//         }
+//     }
+// }

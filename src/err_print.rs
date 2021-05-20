@@ -19,7 +19,7 @@ impl ErrorPrinter {
         use self::cmp::*;
 
         let fst = self.position_to_row_col(*position.l());
-        let snd = self.position_to_row_col(*position.r() - 1);
+        let snd = self.position_to_row_col(max(*position.r() - 1, *position.l()));
         self.print_lines(fst.row.saturating_sub(ROW_MARGIN), fst.row);
         if fst.row != snd.row {
             self.print_multiline(fst, snd);

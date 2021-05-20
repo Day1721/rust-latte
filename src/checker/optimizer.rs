@@ -144,6 +144,7 @@ fn inline_constants(ast: &mut ast::AttrProgram) {
 
         pub fn up_depth(&mut self) {
             self.depth += 1;
+            self.envs.push(HashMap::new())
         }
         
         pub fn down_depth(&mut self) {
@@ -178,10 +179,20 @@ impl ast::Type {
     fn default(&self) -> Value {
         use self::ast::Type::*;
         match self {
+            Simple(t) => t.default(),
+            Arr(t) => unimplemented!(),
+        }
+    }
+}
+
+impl ast::SimpleType {
+    fn default(&self) -> Value {
+        use self::ast::SimpleType::*;
+        match self {
             Int => Value::Int(0),
             Str => Value::Str("".to_string()),
             Bool => Value::Bool(false),
-            _ => unreachable!()
+            Void => unreachable!()
             // Arr(_) => 
         }
     }

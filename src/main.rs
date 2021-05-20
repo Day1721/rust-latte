@@ -13,12 +13,15 @@ use std::env;
 use std::fs;
 use std::path::{Path};
 
+static ERR_EXIT_CODE: i32 = 42;
+
 fn print_errs(code: &String, errs: Vec<data::types::FrontError>) {
     eprintln!("ERROR");
     let printer = err_print::ErrorPrinter::new(code);
     for err in errs {
         printer.print(err.position, err.message);
     }
+    std::process::exit(ERR_EXIT_CODE);
 }
 
 fn main() {

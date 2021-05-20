@@ -21,7 +21,7 @@ pub type Argument = Box<WithPosition<Arg,()>>;
 
 #[derive(new)]
 pub struct Arg {
-    pub ltype: Box<Type>, 
+    pub ltype: Box<Type>,
     pub name: Ident
 }
 
@@ -39,6 +39,7 @@ pub enum StmtG<A, E> {
     Ret(Option<E>),
     If(E, StatementG<StmtG<A, E>, A>, Option<StatementG<StmtG<A, E>, A>>),
     While(E, StatementG<StmtG<A, E>, A>),
+    For(SimpleType, Ident, Ident, StatementG<StmtG<A,E>, A>),
     Expr(E),
     Error
 }
@@ -62,6 +63,9 @@ pub enum ExprG<A> {
     App(Ident, Vec<ExpressionG<A>>),
     UnaryOper(ExpressionG<A>, UnaryOper),
     BinOper(ExpressionG<A>, BinOper, ExpressionG<A>),
+    ArrayAccess(Ident, ExpressionG<A>),
+    Null(Box<Type>),
+    New(Box<Type>),
     Error
 }
 pub type Expr = ExprG<()>;
@@ -91,11 +95,16 @@ pub enum UnaryOper {
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Type {
+    Simple(SimpleType),
+    Arr(SimpleType)
+}
+
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Copy)]
+pub enum SimpleType {
     Int,
     Str,
     Bool,
-    Void,
-    Arr(Box<Type>)
+    Void
 }
 
 
@@ -165,7 +174,7 @@ impl Attribute for StmtAttr {
 impl Attribute for ExprAttr {
     fn new() -> Self {
         ExprAttr {
-            expr_t: Type::Void
+            expr_t: Type::Simple(SimpleType::Void)
         }
     }
 }
@@ -232,7 +241,8 @@ impl<A,E:Debug> Debug for StmtG<A,E> {
             If(ref cond, ref then, ref els) => match (&*then,els) {
                 (v, None) => write!(f, "if ({:?}) {{{:?}}}", cond, Box::new(v)),
                 (v, Some(els)) => write!(f, "if ({:?}) {{{:?}}} else {:?}", cond, Box::new(v), els)
-            }
+            },
+            For(ref t, ref iter, ref arr, ref stmt) => write!(f, "for ({:?} {} : {}) {{{:?}}}", t, iter, arr, stmt),
             While(ref cond, ref stmt) => write!(f, "while ({:?}) {{{:?}}}", cond, stmt),
             Expr(ref e) => write!(f, "{:?};", e),
             Error => write!(f, "#ERROR#")
@@ -276,6 +286,9 @@ impl Debug for Expr {
             },
             UnaryOper(ref expr, ref oper) => write!(f, "({:?}{:?})", oper, expr),
             BinOper(ref l, o, ref r) => write!(f, "({:?} {:?} {:?})", l, o, r),
+            ArrayAccess(ref arr, ref idx) => write!(f, "{}[{:?}]", arr, idx),
+            Null(ref t) => write!(f, "({:?})null", t),
+            New(ref t) => write!(f, "new {:?}", t),
             Error => write!(f, "#ERROR#")
         }
     }
@@ -315,12 +328,21 @@ impl Debug for BinOper {
 impl Debug for Type {
     fn fmt(&self, f: &mut Formatter) -> Result<(),Error> {
         use self::Type::*;
+        match self {
+            Simple(t) => write!(f, "{:?}", t),
+            Arr(t) => write!(f, "{:?}[]", t)
+        }
+    }
+}
+
+impl Debug for SimpleType {
+    fn fmt(&self, f: &mut Formatter) -> Result<(),Error> {
+        use self::SimpleType::*;
         match *self {
             Int => write!(f, "int"),
             Str => write!(f, "string"),
             Bool => write!(f, "bool"),
             Void => write!(f, "void"),
-            Arr(ref t) => write!(f, "{:?}[]", t)
         }
     }
 }

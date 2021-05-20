@@ -1,4 +1,4 @@
-use data::{ast::{Program, TopDefG, Ident, Type}, 
+use data::{ast::{Program, TopDefG, Ident, Type, SimpleType},
            types::{InternalType, SpecType, FrontResult, FrontError}};
 use std::collections::HashMap;
 
@@ -6,6 +6,7 @@ use std::collections::HashMap;
 pub fn collect_top_defs(ast: &Program) -> FrontResult<HashMap<Ident, InternalType>> {
     use self::SpecType::*;
     use self::Type::*;
+    use self::SimpleType::*;
     let mut res: HashMap<Ident, InternalType> = HashMap::new();
     //TODO (opt) use DSL macro for type making :D
     {
@@ -13,10 +14,10 @@ pub fn collect_top_defs(ast: &Program) -> FrontResult<HashMap<Ident, InternalTyp
             res.insert(name.to_string(), InternalType::single(t));
         };
 
-        ins("printString", Func(vec![Box::new(Str)], Void ));
-        ins("printInt", Func(vec![Box::new(Int)], Void ));
-        ins("readInt", Func(vec![], Int));
-        ins("readString", Func(vec![], Str));
+        ins("printString", Func(vec![Box::new(Simple(Str))], Simple(Void) ));
+        ins("printInt", Func(vec![Box::new(Simple(Int))], Simple(Void) ));
+        ins("readInt", Func(vec![], Simple(Int)));
+        ins("readString", Func(vec![], Simple(Str)));
     }
 
     collect_top_defs_exact(ast, &mut res)?;

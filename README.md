@@ -20,4 +20,4 @@ source files can be found in "src" directory, which contains:
   - translator: translates ast to llvm,
   - scripts: contains executable, which is copied as a result executable compiler
 
-by now, no extentions were implemented yet
+by now, no extentions have been implemented yet

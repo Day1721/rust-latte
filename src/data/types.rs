@@ -1,5 +1,5 @@
 use std::fmt::{Formatter, Error, Display, Debug};
-use super::ast::{Type, Argument, BinOper, UnaryOper};
+use super::ast::{Type, SimpleType, Argument, BinOper, UnaryOper};
 
 #[derive(new, Debug, Clone, Getters)]
 pub struct Position { 
@@ -150,7 +150,7 @@ impl Display for InternalType {
 #[derive(PartialEq, Eq, Clone, PartialOrd, Ord)]
 pub enum SpecType {
     Func(Vec<Box<Type>>, Type),
-    Type(Type)
+    Type(Type),
 }
 
 impl Display for SpecType {
@@ -169,7 +169,7 @@ impl Display for SpecType {
                     }
                 };
                 write!(f, ") -> {}", result)
-            }
+            },
         }
     }
 }
@@ -189,9 +189,25 @@ impl SpecType {
     }
 }
 
-impl Type {
-    pub fn to_internal_type(self) -> InternalType {
-        InternalType::single(SpecType::Type(self))
+pub trait ToInternalType {
+    fn to_internal_type(self) -> InternalType;
+}
+
+impl ToInternalType for Type {
+    fn to_internal_type(self) -> InternalType {
+        SpecType::Type(self).to_internal_type()
+    }
+}
+
+impl ToInternalType for SimpleType {
+    fn to_internal_type(self) -> InternalType {
+        Type::Simple(self).to_internal_type()
+    }
+}
+
+impl ToInternalType for SpecType {
+    fn to_internal_type(self) -> InternalType {
+        InternalType::single(self)
     }
 }
 
@@ -203,7 +219,7 @@ pub trait Typeable {
 impl Typeable for UnaryOper {
     fn get_arg_type(&self) -> InternalType {
         use self::UnaryOper::*;
-        use self::Type::*;
+        use self::SimpleType::*;
         match self {
             Not => Bool,
             Neg => Int
@@ -219,14 +235,15 @@ impl Typeable for BinOper {
     fn get_arg_type(&self) -> InternalType {
         use self::BinOper::*;
         use self::Type::*;
+        use self::SimpleType::*;
         match self {
-            Add => InternalType::new(vec![SpecType::Type(Int), SpecType::Type(Str)]),
+            Add => InternalType::new(vec![SpecType::Type(Simple(Int)), SpecType::Type(Simple(Str))]),
             Sub => Int.to_internal_type(),
             Mul => Int.to_internal_type(),
             Div => Int.to_internal_type(),
             Mod => Int.to_internal_type(),
-            Eq => InternalType::new(vec![SpecType::Type(Int), SpecType::Type(Str), SpecType::Type(Bool)]),
-            NE => InternalType::new(vec![SpecType::Type(Int), SpecType::Type(Str), SpecType::Type(Bool)]),
+            Eq => InternalType::new(vec![SpecType::Type(Simple(Int)), SpecType::Type(Simple(Str)), SpecType::Type(Simple(Bool))]),
+            NE => InternalType::new(vec![SpecType::Type(Simple(Int)), SpecType::Type(Simple(Str)), SpecType::Type(Simple(Bool))]),
             LT => Int.to_internal_type(),
             GT => Int.to_internal_type(),
             LE => Int.to_internal_type(),
@@ -238,7 +255,7 @@ impl Typeable for BinOper {
 
     fn get_ret_type(&self) -> InternalType {
         use self::BinOper::*;
-        use self::Type::*;
+        use self::SimpleType::*;
         match self {
             Eq => Bool.to_internal_type(),
             NE => Bool.to_internal_type(),
